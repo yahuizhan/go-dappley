@@ -59,13 +59,22 @@ func ManualTPSTester() {
 			logger.Error("account.dat出错，请删除重启程序")
 			return
 		}
+		var total uint64 = 0
 		for i := 0; i < lenAccount; i = i + 2 {
 			fromAccount := acInfo.Accounts[i]
 			toAccount := acInfo.Accounts[i+1]
 			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
-			acInfo.Balances[fromAccount.GetAddress().String()] = uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
+			fromBalance := uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
+			acInfo.Balances[fromAccount.GetAddress().String()] = fromBalance
 			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
-			acInfo.Balances[toAccount.GetAddress().String()] = uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
+			toBalance := uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
+			acInfo.Balances[toAccount.GetAddress().String()] = toBalance
+
+			if fromBalance <= 1 {
+				total = total + configs.GetAmountFromMinner()
+			} else {
+				total = total + fromBalance
+			}
 
 			go startTxFromFile(
 				serviceClient,
@@ -77,7 +86,7 @@ func ManualTPSTester() {
 				toAccount)
 		}
 		numRoutines = lenAccount / 2
-		acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(lenAccount/2)) //change total here
+		acInfo.WaitTillGetToken(total)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -134,7 +143,7 @@ func startTx(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc s
 			}
 			if canRun && accInfo.GetBalance(fromAcc) > 1 {
 				logger.Infof("Sending 1 Token from %s to %s with 1 tip...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAcc)
+				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAcc)
 			} else if !canRun {
 				time.Sleep(2)
 				runtime.Goexit() //退出go线程

@@ -61,13 +61,22 @@ func TPSTester() {
 			return
 		}
 		logger.Info("找到:", len(acInfo.Accounts)/2, " 对账户。 TPS为", float32(len(acInfo.Accounts)/2)*configs.Tps)
+		var total uint64 = 0
 		for i := 0; i < lenAccount; i = i + 2 {
 			fromAccount := acInfo.Accounts[i]
 			toAccount := acInfo.Accounts[i+1]
 			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
-			acInfo.Balances[fromAccount.GetAddress().String()] = uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
+			fromBalance := uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
+			acInfo.Balances[fromAccount.GetAddress().String()] = fromBalance
 			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
-			acInfo.Balances[toAccount.GetAddress().String()] = uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
+			toBalance := uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
+			acInfo.Balances[toAccount.GetAddress().String()] = toBalance
+
+			if fromBalance <= 1 {
+				total = total + configs.GetAmountFromMinner()
+			} else {
+				total = total + fromBalance
+			}
 
 			go StartTransactionFromFile(
 				serviceClient,
@@ -79,7 +88,7 @@ func TPSTester() {
 				fromAccount,
 				toAccount)
 		}
-		acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(lenAccount/2))
+		acInfo.WaitTillGetToken(total)
 
 	}
 	//等待所有账户拿到钱
