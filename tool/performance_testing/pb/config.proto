@@ -5,16 +5,15 @@ option go_package = "github.com/dappley/go-dappley/tool/performance_testing/pb;p
 
 message Config{
   int32 goCount = 1;
-  int32 tps = 2;
+  float tps = 2;
   string minerPrivKey = 3;
   uint64 amountFromMinner = 4;
   uint64 amountPerTx =5;
   string ip = 6;
   string port = 7;
-  float newGoSpan =8;
-  bool logOpen = 9;
-  string logName = 10;
-  string logLevel = 11;
-  int32 logCount = 12;
-  int32 logRotateTime = 13;
+  bool logOpen = 8;
+  string logName = 9;
+  string logLevel = 10;
+  int32 logCount = 11;
+  int32 logRotateTime = 12;
 }

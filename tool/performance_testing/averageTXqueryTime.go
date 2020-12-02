@@ -1,6 +1,10 @@
 package main
 
 import (
+	"math/rand"
+	"sync"
+	"time"
+
 	"github.com/dappley/go-dappley/config"
 	"github.com/dappley/go-dappley/core/account"
 	"github.com/dappley/go-dappley/core/utxo"
@@ -9,11 +13,7 @@ import (
 	"github.com/dappley/go-dappley/tool/performance_testing/service"
 	util_ron "github.com/dappley/go-dappley/tool/performance_testing/util"
 	logger "github.com/sirupsen/logrus"
-	"math/rand"
-	"sync"
-	"time"
 )
-
 
 type txQueryTime struct {
 	time  []int64
@@ -21,8 +21,8 @@ type txQueryTime struct {
 }
 
 func AverageTxQue() {
-	duration:= 60 //测试持续时间，单位秒，发送交易的时间
-	var goCount int32= 10
+	duration := 60 //测试持续时间，单位秒，发送交易的时间
+	var goCount int32 = 10
 	//config
 	configs := &performance_configpb.Config{}
 	config.LoadConfig(configFilePath, configs)
@@ -42,7 +42,7 @@ func AverageTxQue() {
 	logger.Info("发送查询请求，记录查询请求发送时间和信息返回时间,")
 	logger.Info("获得平均及最长交易确认时间")
 	logger.Info("")
-	logger.Info("此次测试将会持续",duration,"秒")
+	logger.Info("此次测试将会持续", duration, "秒")
 	logger.Info("正在初始化...")
 
 	txQueryTime := txQueryTime{}
@@ -58,7 +58,7 @@ func AverageTxQue() {
 	//让交易发送一会
 	time.Sleep(time.Duration(duration) * time.Second)
 	txQueryTime.mutex.Lock()
-	logger.Info("共耗时: ",duration,"秒,查询交易: ", len(txQueryTime.time), "笔")
+	logger.Info("共耗时: ", duration, "秒,查询交易: ", len(txQueryTime.time), "笔")
 	ave, max := util_ron.GetAvergeAndMax(txQueryTime.time)
 	txQueryTime.mutex.Unlock()
 	logger.Info("【平均】交易查询时间为: ", ave, "微秒，【最长】交易查询时间为: ", max, "微秒")
@@ -73,27 +73,27 @@ func startTransactionQuery(ser *service.Service, accInfo *account_ron.AccountInf
 	fromAccount, toAccount := accInfo.CreateAccountPair()
 	fromAcc := fromAccount.GetAddress().String()
 
-	var lastToBalace,nowBalance,spendTime int64
+	var lastToBalace, nowBalance, spendTime int64
 	var utxoTx *utxo.UTXOTx
 
 	for {
 		if accInfo.GetBalance(fromAcc) < 1 {
 			utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
-			for uint64(ser.GetBalance(fromAcc)) < 0{ //等待fromAcc token到账
-					time.Sleep(100 * time.Millisecond)
+			for uint64(ser.GetBalance(fromAcc)) < 0 { //等待fromAcc token到账
+				time.Sleep(100 * time.Millisecond)
 			}
 		}
 		//rand sleep 1-5秒
 		time.Sleep(time.Duration(rand.Intn(5000)) * time.Millisecond)
 		//发送交易
 		if accInfo.GetBalance(fromAcc) >= 1 {
-			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, fromAcc, toAccount.GetAddress().String())
+			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAccount.GetAddress().String())
 		}
 
 		//计算打印时间，并报错，后续求平均值和最大值
-		for nowBalance <= lastToBalace{ //等待token到账
+		for nowBalance <= lastToBalace { //等待token到账
 			time.Sleep(100 * time.Millisecond)
-			nowBalance,spendTime = ser.GetBalanceWithRespondTime(toAccount.GetAddress().String())
+			nowBalance, spendTime = ser.GetBalanceWithRespondTime(toAccount.GetAddress().String())
 		}
 		txQueryTime.mutex.Lock()
 		txQueryTime.time = append(txQueryTime.time, spendTime)
@@ -103,4 +103,3 @@ func startTransactionQuery(ser *service.Service, accInfo *account_ron.AccountInf
 	}
 
 }
-

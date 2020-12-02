@@ -1,11 +1,12 @@
 package account_ron
 
 import (
+	"sync"
+	"time"
+
 	"github.com/dappley/go-dappley/core/account"
 	"github.com/dappley/go-dappley/logic"
 	logger "github.com/sirupsen/logrus"
-	"sync"
-	"time"
 )
 
 //保存在本地的账户余额，账户余额是本地计算，并非链上的
@@ -26,8 +27,6 @@ func NewAccountInfo() *AccountInfo {
 		sync.RWMutex{},
 	}
 }
-
-
 
 //本地创建账户
 func (acc *AccountInfo) CreateAccount() (*account.Account, error) {

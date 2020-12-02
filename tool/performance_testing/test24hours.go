@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"time"
+
 	"github.com/dappley/go-dappley/config"
 	"github.com/dappley/go-dappley/core/account"
 	performance_configpb "github.com/dappley/go-dappley/tool/performance_testing/pb"
 	account_ron "github.com/dappley/go-dappley/tool/performance_testing/sdk"
 	"github.com/dappley/go-dappley/tool/performance_testing/service"
 	logger "github.com/sirupsen/logrus"
-	"math"
-	"time"
 )
 
 //说明：default.conf: goCount设置为10，tps为2
@@ -29,7 +30,7 @@ func Lowload() {
 	logger.Info("测试目的：")
 	logger.Info("验证系统低负载运行场景下的表现")
 	logger.Info("测试步骤：")
-	logger.Info("在", runTime24, "秒内,向服务器持续发送交易请求,TPS为",configs.GoCount*configs.Tps,",然后验证交易成功率")
+	logger.Info("在", runTime24, "秒内,向服务器持续发送交易请求,TPS为", float32(configs.GoCount)*configs.Tps, ",然后验证交易成功率")
 	logger.Info("")
 	logger.Info("正在初始化...")
 
@@ -47,11 +48,11 @@ func Lowload() {
 	}
 
 	//等待所有账户拿到钱
-	acInfo.WaitTillGetToken(configs.GetAmountFromMinner()*uint64(configs.GetGoCount()))
+	acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(configs.GetGoCount()))
 
 	startTest = true
 	logger.Info("开始发送交易...")
-	logger.Info("当前时间为：",time.Now().Format("2006-01-02 15:04:05"))
+	logger.Info("当前时间为：", time.Now().Format("2006-01-02 15:04:05"))
 
 	//日志刷新
 	stopLog := make(chan bool)
@@ -75,9 +76,4 @@ func Lowload() {
 	logger.Info("交易成功率：", fmt.Sprintf("%.2f", float64(toSum)/float64(localToSum)*100), "%")
 	logger.Info("平均TPS：", math.Round(float64(toSum)/float64(runTime24)))
 	logger.Info("测试结束")
-
 }
-
-
-
-

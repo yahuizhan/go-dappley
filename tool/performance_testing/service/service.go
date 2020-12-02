@@ -8,6 +8,7 @@ import (
 
 	"github.com/dappley/go-dappley/common"
 	"github.com/dappley/go-dappley/core/account"
+	"github.com/dappley/go-dappley/core/transaction"
 	transactionpb "github.com/dappley/go-dappley/core/transaction/pb"
 	"github.com/dappley/go-dappley/core/utxo"
 	rpcpb "github.com/dappley/go-dappley/rpc/pb"
@@ -83,124 +84,12 @@ func (ser *Service) minerSendTokenToAccount(amount uint64, account string) {
 	}
 	//logger.Info(amount, " has been sent to FromAddress.",time.Now().Format("2006-01-02 15:04:05"))
 	logger.Info("已向矿工发送获取token请求...")
-
-}
-
-//生成一对一的交易
-func (ser *Service) sendOneToOneToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
-	var oneUtxo *utxo.UTXO
-	//找到一个的UTXO
-
-	for _, v := range utxos.Indices {
-		oneUtxo = v
-		break
-	}
-	//把这个utxo发送掉
-	amount := oneUtxo.Value.Uint64()
-	oneUtxoTX := []*utxo.UTXO{oneUtxo}
-	logger.Info("send an utxo with value: ", amount)
-	ser.sendUTXOToken(pubkeyHash, oneUtxoTX, utxos, accInfo, amount, fromAccount, toAccount)
-}
-
-//生成一对多的交易
-func (ser *Service) sendOneToAllToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
-	var oneUtxo *utxo.UTXO
-	//找到一个大于1的UTXO
-	for _, v := range utxos.Indices {
-		if v.Value.Uint64() > 1 {
-			oneUtxo = v
-			break
-		}
-	}
-	// 让交易返还一个单位的UTXO并使用掉剩下的UTXO
-	amount := oneUtxo.Value.Uint64() - 1
-	oneUtxoTX := []*utxo.UTXO{oneUtxo}
-	logger.Info("send an utxo with value: ", amount)
-	ser.sendUTXOToken(pubkeyHash, oneUtxoTX, utxos, accInfo, amount, fromAccount, toAccount)
-}
-
-//生成多对多的交易
-func (ser *Service) sendAllToAllToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
-	var amount uint64
-	//统计所有utxo的总量
-	for _, v := range utxos.Indices {
-		amount += v.Value.Uint64()
-
-	}
-	// 让交易返还一个单位的UTXO并使用掉剩下的UTXO
-	amount--
-	logger.Info("send an utxo with value: ", amount)
-	ser.SendToken(pubkeyHash, utxos, accInfo, amount, fromAccount, toAccount)
-}
-
-func (ser *Service) sendUTXOToken(pubkeyHash account.PubKeyHash, needSpend []*utxo.UTXO, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount uint64, fromAccount, toAccount string) {
-	//创建交易
-	tx, err := util_ron.CreateUTXOTransaction(needSpend, accInfo, amount, fromAccount, toAccount)
-	if err != nil {
-		logger.Error("The transaction was abandoned.", err)
-		return
-	}
-	//发送交易请求
-	sendTransactionRequest := &rpcpb.SendTransactionRequest{Transaction: tx.ToProto().(*transactionpb.Transaction)}
-	//timer1:=time.Now().Nanosecond()
-	_, err = ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
-	//timer2:=time.Now().Nanosecond()
-	//logger.Info("time:",timer2-timer1)
-	if err != nil {
-		switch status.Code(err) {
-		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
-		default:
-			logger.Error("Other error:", status.Convert(err).Message())
-		}
-		return
-	}
-
-	//这里更新部分是对的，因为更新好以后还是可以继续交易。
-	util_ron.UpdateUTXOs(pubkeyHash, utxos, &tx) //更新utxo
-
-	accInfo.UpdateBalance(fromAccount, -amount)
-	accInfo.UpdateBalance(toAccount, amount)
-	//logger.Info("New transaction is sent! ")
-}
-
-//测试UTXO
-func (ser *Service) StartTestUTXO(pubkeyHash account.PubKeyHash, accInfo *sdk_ron.AccountInfo, minnerAcc, fromAcc, toAcc string, tps int32, amountFromminer uint64, testType string) {
-	var utxoTx *utxo.UTXOTx
-	ticker := time.NewTicker(time.Millisecond * time.Duration(1000/tps)) //定时1秒
-	utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, amountFromminer)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
-			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if len(utxoTx.Indices) > 2 {
-				if testType == "oneToOne" {
-					ser.sendOneToOneToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
-					return
-				} else if testType == "oneToAll" {
-					ser.sendOneToAllToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
-					return
-				} else if testType == "allToAll" {
-					ser.sendAllToAllToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
-					return
-				} else {
-					return
-				}
-			} else { //没钱了就问服务器要
-
-				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, amountFromminer)
-			}
-		}
-	}
 }
 
 func (ser *Service) GetUTXOTxFromServer(fromAccount string) (*utxo.UTXOTx, error) {
 	//从服务器得到响应，包含指定账户地址的utxo信息
 	response, err := ser.conn.RpcGetUTXO(context.Background(), &rpcpb.GetUTXORequest{
 		Address: fromAccount})
-	logger.Info("收到UTXO反馈...")
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
@@ -220,20 +109,25 @@ func (ser *Service) GetUTXOTxFromServer(fromAccount string) (*utxo.UTXOTx, error
 		utxo.TxIndex = int(u.TxIndex)
 		utxoTx.PutUtxo(&utxo) //组装成UTXOTx
 	}
+	logger.Info("收到UTXO,个数: ", len(utxoTx.Indices))
 	return &utxoTx, nil
 }
 
 //付款
-func (ser *Service) SendToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount uint64, fromAccount, toAccount string) {
+func (ser *Service) SendToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) {
 	//创建交易
-	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, fromAccount, toAccount)
+	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, tip, fromAccount, toAccount)
 	if err != nil {
 		logger.Error("The transaction was abandoned.", err)
 		return
 	}
 	//发送交易请求
+	ser.sendToken(tx, pubkeyHash, utxos, accInfo, amount, tip, fromAccount, toAccount)
+}
+
+func (ser *Service) sendToken(tx transaction.Transaction, pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) {
 	sendTransactionRequest := &rpcpb.SendTransactionRequest{Transaction: tx.ToProto().(*transactionpb.Transaction)}
-	_, err = ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
+	_, err := ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
 
 	if err != nil {
 		switch status.Code(err) {
@@ -248,7 +142,7 @@ func (ser *Service) SendToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx,
 	//这里更新部分是对的，因为更新好以后还是可以继续交易。
 	util_ron.UpdateUTXOs(pubkeyHash, utxos, &tx) //更新utxo
 
-	accInfo.UpdateBalance(fromAccount, -amount)
+	accInfo.UpdateBalance(fromAccount, -amount-tip)
 	accInfo.UpdateBalance(toAccount, amount)
 	//logger.Info("New transaction is sent! ")
 }

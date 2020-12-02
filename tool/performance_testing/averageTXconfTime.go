@@ -88,7 +88,7 @@ func startTransaction(ser *service.Service, accInfo *account_ron.AccountInfo, mi
 		time.Sleep(time.Duration(rand.Intn(5000)) * time.Millisecond)
 		//发送交易
 		if accInfo.GetBalance(fromAcc) >= 1 {
-			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, fromAcc, toAccount.GetAddress().String())
+			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAccount.GetAddress().String())
 			sendTime = time.Now()
 		}
 

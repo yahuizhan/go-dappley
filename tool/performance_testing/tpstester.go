@@ -24,7 +24,7 @@ func TPSTester() {
 
 	logger.Info("持续测试开始，可使用 Ctrl+C 中断测试")
 	logger.Info("在", runTime24, "秒内,向服务器持续发送交易请求")
-	logger.Info("TPS为", configs.GoCount*configs.Tps)
+	logger.Info("TPS为", float32(configs.GoCount)*configs.Tps)
 	logger.Info("")
 	logger.Info("正在初始化...")
 
@@ -60,6 +60,7 @@ func TPSTester() {
 			logger.Error("account.dat出错，请删除重启程序")
 			return
 		}
+		logger.Info("找到:", len(acInfo.Accounts)/2, " 对账户。 TPS为", float32(len(acInfo.Accounts)/2)*configs.Tps)
 		for i := 0; i < lenAccount; i = i + 2 {
 			fromAccount := acInfo.Accounts[i]
 			toAccount := acInfo.Accounts[i+1]
@@ -89,7 +90,7 @@ func TPSTester() {
 
 	//日志刷新
 	stopLog := make(chan bool)
-	go LogPrinter(acInfo, serviceClient, stopLog)
+	//go LogPrinter(acInfo, serviceClient, stopLog)
 
 	//让交易发送一段时间
 	time.Sleep(time.Duration(runTime24) * time.Second)

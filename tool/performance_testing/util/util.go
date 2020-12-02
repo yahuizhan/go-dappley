@@ -16,57 +16,51 @@ import (
 	logger "github.com/sirupsen/logrus"
 )
 
-func CreateTransaction(respon *rpcpb.GetUTXOResponse, acc *account_ron.AccountInfo, amount uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
+func CreateTransaction(respon *rpcpb.GetUTXOResponse, acc *account_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
 	//从服务器返回的utxo集合里找到满足转账所需金额的utxo
 	tx_utxos, err := getUTXOsWithAmount(
 		respon.GetUtxos(),
 		common.NewAmount(amount),
-		common.NewAmount(0),
+		common.NewAmount(tip),
 		common.NewAmount(0),
 		common.NewAmount(0))
 	if err != nil {
 		logger.Error("Error:", err.Error())
 		return transaction.Transaction{}, err
 	}
-	//组装交易参数
-	sendTxParam := transaction.NewSendTxParam(
-		account.NewAddress(fromAccount),
-		acc.GetAccount(fromAccount).GetKeyPair(),
-		account.NewAddress(toAccount),
-		common.NewAmount(amount),
-		common.NewAmount(0),
-		common.NewAmount(0),
-		common.NewAmount(0),
-		"")
 
-	return ltransaction.NewUTXOTransaction(tx_utxos, sendTxParam)
+	return CreateUTXOTransaction(tx_utxos, acc, amount, tip, fromAccount, toAccount)
 }
 
-func CreateTransactionByUTXOs(utxoTx *utxo.UTXOTx, acc *account_ron.AccountInfo, amount uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
-
+func CreateTransactionByUTXOs(utxoTx *utxo.UTXOTx, acc *account_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
 	//从服务器返回的utxo集合里找到满足转账所需金额的utxo
 	tx_utxos, err := getUTXOsWithAmountByUTXOs(
 		utxoTx,
 		common.NewAmount(amount),
-		common.NewAmount(0),
+		common.NewAmount(tip),
 		common.NewAmount(0),
 		common.NewAmount(0))
 	if err != nil {
 		logger.Error("Error:", err.Error())
 		return transaction.Transaction{}, err
 	}
+
+	return CreateUTXOTransaction(tx_utxos, acc, amount, tip, fromAccount, toAccount)
+}
+
+func CreateUTXOTransaction(utxos []*utxo.UTXO, acc *account_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
 	//组装交易参数
 	sendTxParam := transaction.NewSendTxParam(
 		account.NewAddress(fromAccount),
 		acc.GetAccount(fromAccount).GetKeyPair(),
 		account.NewAddress(toAccount),
 		common.NewAmount(amount),
-		common.NewAmount(0),
+		common.NewAmount(tip),
 		common.NewAmount(0),
 		common.NewAmount(0),
 		"")
 
-	return ltransaction.NewUTXOTransaction(tx_utxos, sendTxParam) //这里会去计算找零
+	return ltransaction.NewUTXOTransaction(utxos, sendTxParam) //这里会去计算找零
 }
 
 //从utxo集合里拿到足够交易的utxo集合
@@ -128,7 +122,7 @@ func getUTXOsWithAmount(responUtxos []*utxopb.Utxo, amount *common.Amount, tip *
 	}
 
 	if sum.Cmp(amount) < 0 {
-		return nil, errors.New("cli: the balance is insufficient")
+		return nil, errors.New("util: the balance is insufficient")
 	}
 
 	return retUtxos, nil
@@ -194,20 +188,6 @@ func AddUTXO(pubkeyHash account.PubKeyHash, utxoTx *utxo.UTXOTx, txout transacti
 		u = utxo.NewUTXO(txout, txid, vout, utxo.UtxoNormal)
 	}
 	utxoTx.PutUtxo(u)
-}
-
-func CreateUTXOTransaction(utxos []*utxo.UTXO, acc *account_ron.AccountInfo, amount uint64, fromAccount, toAccount string) (transaction.Transaction, error) {
-	sendTxParam := transaction.NewSendTxParam(
-		account.NewAddress(fromAccount),
-		acc.GetAccount(fromAccount).GetKeyPair(),
-		account.NewAddress(toAccount),
-		common.NewAmount(amount),
-		common.NewAmount(0),
-		common.NewAmount(0),
-		common.NewAmount(0),
-		"")
-
-	return ltransaction.NewUTXOTransaction(utxos, sendTxParam)
 }
 
 func GetAvergeAndMax(time []int64) (int64, int64) {

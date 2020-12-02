@@ -34,12 +34,6 @@ func main() {
 			Lowload()
 		case "5":
 			TPSTester()
-		case "6":
-			OneToOneUtxo()
-		case "7":
-			OneToAllUtxo()
-		case "8":
-			AllToAllUtxo()
 		case "9":
 			ManualTPSTester()
 		default:
@@ -58,10 +52,6 @@ func testMenu() {
 	logger.Info("2.平均查询时间 及 最长查询时间")
 	logger.Info("3.高并发场景")
 	logger.Info("4.低负载运行场景")
-	logger.Info("5.TPS")
-	logger.Info("6.一对一UTXO交易")
-	logger.Info("7.一对多UTXO交易")
-	logger.Info("8.多对多UTXO交易")
 	logger.Info("命令说明:")
 	logger.Info("启动第一个测试,即:《1.平均交易确认时间 及 最长交易确认时间》命令: ./performance_testing 1")
 }
@@ -141,11 +131,11 @@ func StartTransactionGoroutine(ser *service.Service, accInfo *account_ron.Accoun
 		case <-ticker.C:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
 				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
 			}
 			if accInfo.GetBalance(fromAcc) > 1 && *start {
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, fromAcc, toAccount.GetAddress().String())
+				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
 
 			}
 		case <-stop:
@@ -169,11 +159,11 @@ func StartTransactionFromFile(ser *service.Service, accInfo *account_ron.Account
 		case <-ticker.C:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
 				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
 			}
 			if accInfo.GetBalance(fromAcc) > 1 && *start {
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, fromAcc, toAccount.GetAddress().String())
+				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
 			}
 		case <-stop:
 			time.Sleep(2)
@@ -218,10 +208,10 @@ func writeToLog(logLevel, logName string, rotateTime, logCount int) {
 	logger.SetReportCaller(true)
 	logger.SetLevel(level)
 	logger.SetFormatter(&logger.TextFormatter{
-		FullTimestamp:             true,
+		FullTimestamp:             false,
 		ForceColors:               true,
 		EnvironmentOverrideColors: true,
-		TimestampFormat:           time.RFC3339Nano,
+		//TimestampFormat:           time.RFC3339Nano,
 	})
 
 	writer, err := rotatelogs.New(

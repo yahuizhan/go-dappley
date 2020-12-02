@@ -23,7 +23,7 @@ func ManualTPSTester() {
 	buildLog(configs)
 
 	logger.Info("手动持续测试开始，可使用 Ctrl+C 中断测试")
-	logger.Info("TPS为", configs.GoCount*configs.Tps)
+	logger.Info("TPS为", float32(configs.GoCount)*configs.Tps)
 	logger.Info("")
 	logger.Info("正在初始化...")
 
@@ -77,7 +77,7 @@ func ManualTPSTester() {
 				toAccount)
 		}
 		numRoutines = lenAccount / 2
-		acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(lenAccount/2))
+		acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(lenAccount/2)) //change total here
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -128,13 +128,13 @@ func startTx(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc s
 		case canRun := <-run:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
 				logger.Infof("Getting %v Tokens from Miner...\n", config.AmountFromMinner)
 				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
 			}
 			if canRun && accInfo.GetBalance(fromAcc) > 1 {
-				logger.Infof("Sending 1 Token from %s to %s...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, fromAcc, toAcc)
+				logger.Infof("Sending 1 Token from %s to %s with 1 tip...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
+				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAcc)
 			} else if !canRun {
 				time.Sleep(2)
 				runtime.Goexit() //退出go线程
