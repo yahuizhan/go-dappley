@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/dappley/go-dappley/config"
 	"github.com/dappley/go-dappley/core/account"
 	"github.com/dappley/go-dappley/core/utxo"
 	performance_configpb "github.com/dappley/go-dappley/tool/performance_testing/pb"
@@ -36,6 +37,8 @@ func main() {
 			TPSTester()
 		case "9":
 			ManualTPSTester()
+		case "balance":
+			printServerBalance()
 		default:
 			testMenu()
 			return
@@ -235,4 +238,28 @@ func writeToLog(logLevel, logName string, rotateTime, logCount int) {
 	}, &logger.TextFormatter{DisableColors: true})
 
 	logger.AddHook(lfsHook)
+}
+
+func printServerBalance() {
+	configs := &performance_configpb.Config{}
+	config.LoadConfig(configFilePath, configs)
+
+	serviceClient := service.NewServiceClient(configs.GetIp(), configs.GetPort())
+	accounts, err := account_ron.ReadAccountFromFile()
+
+	if err != nil {
+		logger.Info("未找到account.dat ... 没有账户，无法获取余额")
+	} else {
+		lenAccount := len(accounts)
+		if lenAccount%2 != 0 {
+			logger.Error("account.dat出错，请删除重启程序")
+			return
+		}
+
+		for _, acc := range accounts {
+			addr := acc.GetAddress().String()
+			balance := uint64(serviceClient.GetBalance(addr))
+			logger.Infof("Balance of Account %s : %v\n", shortenAddress(addr), balance)
+		}
+	}
 }
