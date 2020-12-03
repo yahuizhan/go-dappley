@@ -147,6 +147,41 @@ func (ser *Service) sendToken(tx transaction.Transaction, pubkeyHash account.Pub
 	//logger.Info("New transaction is sent! ")
 }
 
+//付款，并报错
+func (ser *Service) SendTokenWithError(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) error {
+	//创建交易
+	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, tip, fromAccount, toAccount)
+	if err != nil {
+		logger.Error("The transaction was abandoned.", err)
+		return err
+	}
+	//发送交易请求
+	return ser.sendTokenWithError(tx, pubkeyHash, utxos, accInfo, amount, tip, fromAccount, toAccount)
+}
+
+func (ser *Service) sendTokenWithError(tx transaction.Transaction, pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) error {
+	sendTransactionRequest := &rpcpb.SendTransactionRequest{Transaction: tx.ToProto().(*transactionpb.Transaction)}
+	_, err := ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
+
+	if err != nil {
+		switch status.Code(err) {
+		case codes.Unavailable:
+			logger.Error("Error: server is not reachable!")
+		default:
+			logger.Error("Other error:", status.Convert(err).Message())
+		}
+		return err
+	}
+
+	//这里更新部分是对的，因为更新好以后还是可以继续交易。
+	util_ron.UpdateUTXOs(pubkeyHash, utxos, &tx) //更新utxo
+
+	accInfo.UpdateBalance(fromAccount, -amount-tip)
+	accInfo.UpdateBalance(toAccount, amount)
+	//logger.Info("New transaction is sent! ")
+	return nil
+}
+
 //得到指定账户的余额
 func (ser *Service) GetBalance(account string) int64 {
 	response, err := ser.conn.RpcGetBalance(context.Background(), &rpcpb.GetBalanceRequest{Address: account})
@@ -158,6 +193,21 @@ func (ser *Service) GetBalance(account string) int64 {
 			logger.Error("Error:", status.Convert(err).Message())
 		}
 		os.Exit(1)
+	}
+	return response.GetAmount()
+}
+
+//得到指定账户的余额，报错不退出程序
+func (ser *Service) GetBalanceNotExit(account string) int64 {
+	response, err := ser.conn.RpcGetBalance(context.Background(), &rpcpb.GetBalanceRequest{Address: account})
+	if err != nil {
+		switch status.Code(err) {
+		case codes.Unavailable:
+			logger.Error("Error: server is not reachable!")
+		default:
+			logger.Error("Error:", status.Convert(err).Message())
+		}
+		return -1
 	}
 	return response.GetAmount()
 }

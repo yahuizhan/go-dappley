@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
-	"math"
+	"runtime"
 	"time"
 
 	"github.com/dappley/go-dappley/config"
 	"github.com/dappley/go-dappley/core/account"
+	"github.com/dappley/go-dappley/core/utxo"
 	performance_configpb "github.com/dappley/go-dappley/tool/performance_testing/pb"
 	account_ron "github.com/dappley/go-dappley/tool/performance_testing/sdk"
 	"github.com/dappley/go-dappley/tool/performance_testing/service"
@@ -17,13 +17,20 @@ import (
 func TPSTester() {
 
 	//config
-	runTime24 := 86400 //运行交易时间  1小时=3,600，24小时=86,400
 	configs := &performance_configpb.Config{}
 	config.LoadConfig(configFilePath, configs)
 	buildLog(configs)
 
+	for {
+		runTPSTester(configs)
+		logger.Info("Restarting TPS Tester in 15 seconds ... ")
+		time.Sleep(15 * time.Second)
+	}
+
+}
+
+func runTPSTester(configs *performance_configpb.Config) {
 	logger.Info("持续测试开始，可使用 Ctrl+C 中断测试")
-	logger.Info("在", runTime24, "秒内,向服务器持续发送交易请求")
 	logger.Info("TPS为", float32(configs.GoCount)*configs.Tps)
 	logger.Info("")
 	logger.Info("正在初始化...")
@@ -35,6 +42,7 @@ func TPSTester() {
 	acInfo := account_ron.NewAccountInfo()
 	stopChan := make(chan bool)
 	startTest := false
+	restartChan := make(chan bool)
 
 	var err error
 	acInfo.Accounts, err = account_ron.ReadAccountFromFile()
@@ -43,12 +51,13 @@ func TPSTester() {
 		logger.Info("正在向矿工获取token...")
 		//交易生成
 		for i := int32(0); i < configs.GetGoCount(); i++ {
-			go StartTransactionGoroutine(
+			go startTransactionTPSGoroutine(
 				serviceClient,
 				acInfo,
 				minerAccount.GetAddress().String(),
 				configs,
 				&startTest,
+				restartChan,
 				stopChan)
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -65,25 +74,34 @@ func TPSTester() {
 		for i := 0; i < lenAccount; i = i + 2 {
 			fromAccount := acInfo.Accounts[i]
 			toAccount := acInfo.Accounts[i+1]
-			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
-			fromBalance := uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
-			acInfo.Balances[fromAccount.GetAddress().String()] = fromBalance
-			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
-			toBalance := uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
-			acInfo.Balances[toAccount.GetAddress().String()] = toBalance
 
+			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
+			fromBalance := serviceClient.GetBalanceNotExit(fromAccount.GetAddress().String())
+			if fromBalance < 0 {
+				return
+			}
 			if fromBalance <= 1 {
+				acInfo.Balances[fromAccount.GetAddress().String()] = uint64(fromBalance)
 				total = total + configs.GetAmountFromMinner()
 			} else {
-				total = total + fromBalance
+				acInfo.Balances[fromAccount.GetAddress().String()] = uint64(fromBalance)
+				total = total + uint64(fromBalance)
 			}
 
-			go StartTransactionFromFile(
+			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
+			toBalance := serviceClient.GetBalanceNotExit(toAccount.GetAddress().String())
+			if toBalance < 0 {
+				return
+			}
+			acInfo.Balances[toAccount.GetAddress().String()] = uint64(toBalance)
+
+			go startTransactionTPSFromFile(
 				serviceClient,
 				acInfo,
 				minerAccount.GetAddress().String(),
 				configs,
 				&startTest,
+				restartChan,
 				stopChan,
 				fromAccount,
 				toAccount)
@@ -99,25 +117,61 @@ func TPSTester() {
 
 	//日志刷新
 	stopLog := make(chan bool)
-	//go LogPrinter(acInfo, serviceClient, stopLog)
+	go LogPrinter(acInfo, serviceClient, stopLog)
 
-	//让交易发送一段时间
-	time.Sleep(time.Duration(runTime24) * time.Second)
-
-	//停止日志和所有go程交易
-	stopLog <- true
-	startTest = false
-	for i := int32(0); i < configs.GetGoCount(); i++ {
-		stopChan <- true
+	select {
+	case <-restartChan:
+		//停止日志和所有go程交易
+		stopLog <- true
+		startTest = false
+		for i := int32(0); i < configs.GetGoCount(); i++ {
+			stopChan <- true
+		}
+		logger.Info("Exiting All StartTransaction Routines ... ")
 	}
-	logger.Info("交易发送停止,已用时间测试：", runTime24, "秒.")
+}
 
-	logger.Info("验证开始...")
-	//计算发交易双方的balance
-	toSum, localToSum := CheckTransactionNumber(acInfo, serviceClient)
-	logger.Info("发送交易：", localToSum, "笔，成功接收交易:", toSum, "笔.")
-	logger.Info("交易成功率：", fmt.Sprintf("%.2f", float64(toSum)/float64(localToSum)*100), "%")
-	logger.Info("平均TPS：", math.Round(float64(toSum)/float64(runTime24)))
-	logger.Info("测试结束")
+//开始交易，from问矿工要钱，再给to,没钱了再问矿工要，一直重复
+func startTransactionTPSGoroutine(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart, stop chan bool) {
+	fromAccount, toAccount := accInfo.CreateAccountPair()
+	var utxoTx *utxo.UTXOTx
+	startTransactionTPS(utxoTx, ser, accInfo, minnerAcc, config, start, restart, stop, fromAccount, toAccount)
+}
 
+//开始交易，from问矿工要钱，再给to,没钱了再问矿工要，一直重复
+func startTransactionTPSFromFile(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart chan<- bool, stop chan bool, fromAccount, toAccount *account.Account) {
+	fromAcc := fromAccount.GetAddress().String()
+	utxoTx, err := ser.GetUTXOTxFromServer(fromAcc)
+	if err != nil {
+		logger.Error("Get UTXOTx error:", err)
+		restart <- true
+		runtime.Goexit()
+	}
+	startTransactionTPS(utxoTx, ser, accInfo, minnerAcc, config, start, restart, stop, fromAccount, toAccount)
+}
+
+func startTransactionTPS(utxoTx *utxo.UTXOTx, ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart chan<- bool, stop chan bool, fromAccount, toAccount *account.Account) {
+	fromAcc := fromAccount.GetAddress().String()
+	ticker := time.NewTicker(time.Microsecond * time.Duration(1000000/config.Tps)) //定时1秒
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
+			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
+				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			}
+			if accInfo.GetBalance(fromAcc) > 1 && *start {
+				err := ser.SendTokenWithError(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
+				if err != nil {
+					logger.Warn("SendToken failed!")
+					restart <- true
+				}
+			}
+		case <-stop:
+			time.Sleep(2)
+			runtime.Goexit() //退出go线程
+		}
+	}
 }
