@@ -258,8 +258,12 @@ func printServerBalance() {
 
 		for _, acc := range accounts {
 			addr := acc.GetAddress().String()
-			balance := uint64(serviceClient.GetBalance(addr))
-			logger.Infof("Balance of Account %s : %v\n", shortenAddress(addr), balance)
+			balance, err := serviceClient.GetBalanceWithError(addr)
+			if err != nil {
+				logger.Error("Cannot get balance for address " + addr)
+				return
+			}
+			logger.Infof("Balance of Account %s : %v\n", shortenAddress(addr), uint64(balance))
 		}
 	}
 }

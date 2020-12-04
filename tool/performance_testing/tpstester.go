@@ -13,6 +13,8 @@ import (
 	logger "github.com/sirupsen/logrus"
 )
 
+var restartWaitTimeSeconds int = 5
+
 //说明：default.conf: goCount设置为10，tps为2
 func TPSTester() {
 
@@ -23,8 +25,8 @@ func TPSTester() {
 
 	for {
 		runTPSTester(configs)
-		logger.Info("Restarting TPS Tester in 15 seconds ... ")
-		time.Sleep(15 * time.Second)
+		logger.Infof("Restarting TPS Tester in %v seconds ... ", restartWaitTimeSeconds)
+		time.Sleep(time.Duration(restartWaitTimeSeconds) * time.Second)
 	}
 
 }
@@ -42,7 +44,7 @@ func runTPSTester(configs *performance_configpb.Config) {
 	acInfo := account_ron.NewAccountInfo()
 	stopChan := make(chan bool)
 	startTest := false
-	restartChan := make(chan bool)
+	restart := false
 
 	var err error
 	acInfo.Accounts, err = account_ron.ReadAccountFromFile()
@@ -57,7 +59,7 @@ func runTPSTester(configs *performance_configpb.Config) {
 				minerAccount.GetAddress().String(),
 				configs,
 				&startTest,
-				restartChan,
+				&restart,
 				stopChan)
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -76,8 +78,8 @@ func runTPSTester(configs *performance_configpb.Config) {
 			toAccount := acInfo.Accounts[i+1]
 
 			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
-			fromBalance := serviceClient.GetBalanceNotExit(fromAccount.GetAddress().String())
-			if fromBalance < 0 {
+			fromBalance, err := serviceClient.GetBalanceWithError(fromAccount.GetAddress().String())
+			if err != nil {
 				return
 			}
 			if fromBalance <= 1 {
@@ -89,8 +91,8 @@ func runTPSTester(configs *performance_configpb.Config) {
 			}
 
 			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
-			toBalance := serviceClient.GetBalanceNotExit(toAccount.GetAddress().String())
-			if toBalance < 0 {
+			toBalance, err := serviceClient.GetBalanceWithError(toAccount.GetAddress().String())
+			if err != nil {
 				return
 			}
 			acInfo.Balances[toAccount.GetAddress().String()] = uint64(toBalance)
@@ -101,7 +103,7 @@ func runTPSTester(configs *performance_configpb.Config) {
 				minerAccount.GetAddress().String(),
 				configs,
 				&startTest,
-				restartChan,
+				&restart,
 				stopChan,
 				fromAccount,
 				toAccount)
@@ -119,38 +121,37 @@ func runTPSTester(configs *performance_configpb.Config) {
 	stopLog := make(chan bool)
 	go LogPrinter(acInfo, serviceClient, stopLog)
 
-	select {
-	case <-restartChan:
-		//停止日志和所有go程交易
-		stopLog <- true
-		startTest = false
-		for i := int32(0); i < configs.GetGoCount(); i++ {
-			stopChan <- true
-		}
-		logger.Info("Exiting All StartTransaction Routines ... ")
+	for !restart {
 	}
+	//停止日志和所有go程交易
+	startTest = false
+	stopLog <- true
+	for i := int32(0); i < configs.GetGoCount(); i++ {
+		stopChan <- true
+	}
+	logger.Info("Exiting All StartTransaction Routines ... ")
 }
 
 //开始交易，from问矿工要钱，再给to,没钱了再问矿工要，一直重复
-func startTransactionTPSGoroutine(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart, stop chan bool) {
+func startTransactionTPSGoroutine(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start, restart *bool, stop chan bool) {
 	fromAccount, toAccount := accInfo.CreateAccountPair()
 	var utxoTx *utxo.UTXOTx
 	startTransactionTPS(utxoTx, ser, accInfo, minnerAcc, config, start, restart, stop, fromAccount, toAccount)
 }
 
 //开始交易，from问矿工要钱，再给to,没钱了再问矿工要，一直重复
-func startTransactionTPSFromFile(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart chan<- bool, stop chan bool, fromAccount, toAccount *account.Account) {
+func startTransactionTPSFromFile(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start, restart *bool, stop chan bool, fromAccount, toAccount *account.Account) {
 	fromAcc := fromAccount.GetAddress().String()
 	utxoTx, err := ser.GetUTXOTxFromServer(fromAcc)
 	if err != nil {
 		logger.Error("Get UTXOTx error:", err)
-		restart <- true
+		*restart = true
 		runtime.Goexit()
 	}
 	startTransactionTPS(utxoTx, ser, accInfo, minnerAcc, config, start, restart, stop, fromAccount, toAccount)
 }
 
-func startTransactionTPS(utxoTx *utxo.UTXOTx, ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start *bool, restart chan<- bool, stop chan bool, fromAccount, toAccount *account.Account) {
+func startTransactionTPS(utxoTx *utxo.UTXOTx, ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, start, restart *bool, stop chan bool, fromAccount, toAccount *account.Account) {
 	fromAcc := fromAccount.GetAddress().String()
 	ticker := time.NewTicker(time.Microsecond * time.Duration(1000000/config.Tps)) //定时1秒
 	defer ticker.Stop()
@@ -159,14 +160,19 @@ func startTransactionTPS(utxoTx *utxo.UTXOTx, ser *service.Service, accInfo *acc
 		case <-ticker.C:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
+			var err error
 			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
-				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+				utxoTx, err = ser.GetTokenWithError(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+				if err != nil {
+					logger.Warn("GetToken failed!")
+					*restart = true
+				}
 			}
 			if accInfo.GetBalance(fromAcc) > 1 && *start {
-				err := ser.SendTokenWithError(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
+				err = ser.SendTokenWithError(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
 				if err != nil {
 					logger.Warn("SendToken failed!")
-					restart <- true
+					*restart = true
 				}
 			}
 		case <-stop:

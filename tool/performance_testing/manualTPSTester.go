@@ -51,7 +51,9 @@ func ManualTPSTester() {
 			time.Sleep(100 * time.Millisecond)
 		}
 		numRoutines = int(configs.GetGoCount())
+		logger.Info("before wait")
 		acInfo.WaitTillGetToken(configs.GetAmountFromMinner() * uint64(configs.GetGoCount()))
+		logger.Info("after wait")
 		account_ron.SaveAccountToFile(acInfo) //写入account.bat
 	} else {
 		lenAccount := len(acInfo.Accounts)
@@ -64,18 +66,24 @@ func ManualTPSTester() {
 			fromAccount := acInfo.Accounts[i]
 			toAccount := acInfo.Accounts[i+1]
 			acInfo.FromAddress = append(acInfo.FromAddress, fromAccount.GetAddress().String())
-			fromBalance := uint64(serviceClient.GetBalance(fromAccount.GetAddress().String()))
+			fromBalance, err := serviceClient.GetBalanceWithError(fromAccount.GetAddress().String())
+			if err != nil {
+				return
+			}
 			if fromBalance <= 1 {
-				acInfo.Balances[fromAccount.GetAddress().String()] = fromBalance
+				acInfo.Balances[fromAccount.GetAddress().String()] = uint64(fromBalance)
 				total = total + configs.GetAmountFromMinner()
 			} else {
-				acInfo.Balances[fromAccount.GetAddress().String()] = fromBalance
-				total = total + fromBalance
+				acInfo.Balances[fromAccount.GetAddress().String()] = uint64(fromBalance)
+				total = total + uint64(fromBalance)
 			}
 
 			acInfo.ToAddress = append(acInfo.ToAddress, toAccount.GetAddress().String())
-			toBalance := uint64(serviceClient.GetBalance(toAccount.GetAddress().String()))
-			acInfo.Balances[toAccount.GetAddress().String()] = toBalance
+			toBalance, err := serviceClient.GetBalanceWithError(toAccount.GetAddress().String())
+			if err != nil {
+				return
+			}
+			acInfo.Balances[toAccount.GetAddress().String()] = uint64(toBalance)
 
 			go startTxFromFile(
 				serviceClient,
@@ -106,7 +114,7 @@ func ManualTPSTester() {
 			for i := 0; i < numRoutines; i++ {
 				sendTxCh <- false
 			}
-			time.Sleep(2)
+			time.Sleep(100 * time.Millisecond)
 			break
 		} else {
 			logger.Warn("Input is not valid")
@@ -126,6 +134,7 @@ func startTxFromFile(ser *service.Service, accInfo *account_ron.AccountInfo, min
 	utxoTx, err := ser.GetUTXOTxFromServer(fromAcc)
 	if err != nil {
 		logger.Error("Get UTXOTx error:", err)
+		os.Exit(1)
 	}
 	startTx(ser, accInfo, minnerAcc, config, sendTxCh, fromAccount, toAccount, utxoTx)
 }
@@ -133,22 +142,29 @@ func startTxFromFile(ser *service.Service, accInfo *account_ron.AccountInfo, min
 func startTx(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc string, config *performance_configpb.Config, sendTxCh chan bool, fromAccount, toAccount *account.Account, utxoTx *utxo.UTXOTx) {
 	fromAcc := fromAccount.GetAddress().String()
 	toAcc := toAccount.GetAddress().String()
+	var err error
 	for {
+		//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
+		//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
+		if accInfo.GetBalance(fromAcc) <= 1 {
+			logger.Infof("Getting %v Tokens from Miner...\n", config.AmountFromMinner)
+			utxoTx, err = ser.GetTokenWithError(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			if err != nil {
+				os.Exit(1)
+			}
+		}
 		select {
 		case canSendTx := <-sendTxCh:
 			if !canSendTx {
 				time.Sleep(2)
 				runtime.Goexit() //退出go线程
 			}
-			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
-			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
-				logger.Infof("Getting %v Tokens from Miner...\n", config.AmountFromMinner)
-				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
-			}
-			if accInfo.GetBalance(fromAcc) > 1 {
+			if accInfo.GetBalance(fromAcc) > 1 { //每次交易就发1个token和1个tip
 				logger.Infof("Sending 1 Token from %s to %s with 1 tip...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAcc)
+				err = ser.SendTokenWithError(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAcc)
+				if err != nil {
+					os.Exit(1)
+				}
 			}
 		}
 	}
