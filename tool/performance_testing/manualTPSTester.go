@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dappley/go-dappley/config"
@@ -101,8 +102,8 @@ func ManualTPSTester() {
 	for {
 		fmt.Print("[Enter 'S' To Send Transactions; Enter 'B' To Check Local Balance; Enter 'E' To Exit] ")
 		input, _ := reader.ReadString('\n')
-		switch input {
-		case "s\n", "S\n":
+		switch strings.TrimSpace(input) {
+		case "s", "S":
 			logger.Info("Sending transactions ...")
 			for i := 0; i < numRoutines; i++ {
 				sendTxSignals[i] = true
@@ -111,10 +112,10 @@ func ManualTPSTester() {
 				waitTillSent(&sendTxSignals[i])
 			}
 			break
-		case "b\n", "B\n":
+		case "b", "B":
 			printBalance(acInfo)
 			break
-		case "e\n", "E\n":
+		case "e", "E":
 			logger.Info("Exiting All Go Routines ...")
 			os.Exit(0)
 		default:
