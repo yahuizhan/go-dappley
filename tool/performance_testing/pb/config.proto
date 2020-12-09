@@ -1,7 +1,7 @@
 syntax = "proto3";
 package performance_configpb;
 
-option go_package = "github.com/dappley/go-dappley/tool/performance_testing/pb;performance_configpb";
+option go_package = "github.com/yahuizhan/go-dappley/tool/performance_testing/pb;performance_configpb";
 
 message Config{
   int32 goCount = 1;

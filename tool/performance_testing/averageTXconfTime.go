@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -76,10 +77,15 @@ func startTransaction(ser *service.Service, accInfo *account_ron.AccountInfo, mi
 	var sendTime time.Time
 	var lastToBalace, nowBalance int64
 	var utxoTx *utxo.UTXOTx
+	var err error
 
 	for {
 		if accInfo.GetBalance(fromAcc) < 1 {
-			utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			utxoTx ,err= ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			if err!=nil{
+				logger.Error("GetBalance failed,error:",err)
+				os.Exit(1)
+			}
 			for ser.GetBalance(fromAcc) < 0 { //等待fromAcc token到账
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -88,7 +94,7 @@ func startTransaction(ser *service.Service, accInfo *account_ron.AccountInfo, mi
 		time.Sleep(time.Duration(rand.Intn(5000)) * time.Millisecond)
 		//发送交易
 		if accInfo.GetBalance(fromAcc) >= 1 {
-			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAccount.GetAddress().String())
+			ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1,0, fromAcc, toAccount.GetAddress().String())
 			sendTime = time.Now()
 		}
 

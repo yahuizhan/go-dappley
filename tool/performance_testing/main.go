@@ -22,7 +22,6 @@ const (
 )
 
 func main() {
-
 	if len(os.Args) > 1 {
 		switch os.Args[1] { //判断第二个命令
 		case "1":
@@ -35,6 +34,8 @@ func main() {
 			Lowload()
 		case "5":
 			TPSTester()
+		case "6":
+			TPSTesterRevse()
 		case "9":
 			ManualTPSTester()
 		case "balance":
@@ -55,6 +56,8 @@ func testMenu() {
 	logger.Info("2.平均查询时间 及 最长查询时间")
 	logger.Info("3.高并发场景")
 	logger.Info("4.低负载运行场景")
+	logger.Info("5.TPS测试")
+	logger.Info("6.反向发交易")
 	logger.Info("命令说明:")
 	logger.Info("启动第一个测试,即:《1.平均交易确认时间 及 最长交易确认时间》命令: ./performance_testing 1")
 }
@@ -77,6 +80,7 @@ func CheckTransactionNumber(acInfo *account_ron.AccountInfo, serviceClient *serv
 			if address == "" {
 				continue
 			}
+			logger.Info("CheckTransactionNumber...")
 			toSum = toSum + serviceClient.GetBalance(address)
 		}
 		if toSum != localToSum {
@@ -127,6 +131,7 @@ func StartTransactionGoroutine(ser *service.Service, accInfo *account_ron.Accoun
 	fromAccount, toAccount := accInfo.CreateAccountPair()
 	fromAcc := fromAccount.GetAddress().String()
 	var utxoTx *utxo.UTXOTx
+	var err error
 	ticker := time.NewTicker(time.Microsecond * time.Duration(1000000/config.Tps)) //定时1秒
 	defer ticker.Stop()
 	for {
@@ -134,15 +139,22 @@ func StartTransactionGoroutine(ser *service.Service, accInfo *account_ron.Accoun
 		case <-ticker.C:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
-				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token
+				utxoTx, err = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+				if err != nil {
+					logger.Error("GetBalance failed,error:", err)
+					*start = false
+				}
 			}
 			if accInfo.GetBalance(fromAcc) > 1 && *start {
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
-
+				err = ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAccount.GetAddress().String())
+				if err != nil {
+					logger.Error("GetBalance failed,error:", err)
+					*start = false
+				}
 			}
 		case <-stop:
-			time.Sleep(2)
+			logger.Info("交易Go程退出...")
 			runtime.Goexit() //退出go线程
 		}
 	}
@@ -162,14 +174,22 @@ func StartTransactionFromFile(ser *service.Service, accInfo *account_ron.Account
 		case <-ticker.C:
 			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
 			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
-			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token和1个tip
-				utxoTx = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+			if accInfo.GetBalance(fromAcc) <= 1 { //每次交易就发1个token
+				utxoTx, err = ser.GetToken(accInfo, minnerAcc, fromAcc, config.AmountFromMinner)
+				if err != nil {
+					logger.Error("GetBalance failed,error:", err)
+					*start = false
+				}
 			}
 			if accInfo.GetBalance(fromAcc) > 1 && *start {
-				ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAccount.GetAddress().String())
+				err = ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAccount.GetAddress().String())
+				if err != nil {
+					logger.Error("GetBalance failed,error:", err)
+					*start = false
+				}
 			}
 		case <-stop:
-			time.Sleep(2)
+			logger.Info("交易Go程退出...")
 			runtime.Goexit() //退出go线程
 		}
 	}
@@ -210,12 +230,6 @@ func writeToLog(logLevel, logName string, rotateTime, logCount int) {
 
 	logger.SetReportCaller(true)
 	logger.SetLevel(level)
-	logger.SetFormatter(&logger.TextFormatter{
-		FullTimestamp:             false,
-		ForceColors:               true,
-		EnvironmentOverrideColors: true,
-		//TimestampFormat:           time.RFC3339Nano,
-	})
 
 	writer, err := rotatelogs.New(
 		logName+".%Y%m%d%H%M%S",

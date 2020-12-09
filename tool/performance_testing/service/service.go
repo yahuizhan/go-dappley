@@ -9,7 +9,6 @@ import (
 
 	"github.com/dappley/go-dappley/common"
 	"github.com/dappley/go-dappley/core/account"
-	"github.com/dappley/go-dappley/core/transaction"
 	transactionpb "github.com/dappley/go-dappley/core/transaction/pb"
 	"github.com/dappley/go-dappley/core/utxo"
 	rpcpb "github.com/dappley/go-dappley/rpc/pb"
@@ -39,8 +38,8 @@ func NewServiceClient(ip, port string) *Service {
 	}
 }
 
-func (ser *Service) GetToken(accInfo *sdk_ron.AccountInfo, minnerAcc string, fromAcc string, amountFromminer uint64) *utxo.UTXOTx {
-	/* count := 0
+func (ser *Service) GetToken(accInfo *sdk_ron.AccountInfo, minnerAcc string, fromAcc string, amountFromminer uint64) (*utxo.UTXOTx, error) {
+	count := 0
 	for uint64(ser.GetBalance(minnerAcc)) <= amountFromminer { //等待矿工有钱
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -51,8 +50,7 @@ func (ser *Service) GetToken(accInfo *sdk_ron.AccountInfo, minnerAcc string, fro
 		count++ //如果7秒还没到账，可能出错了，再问矿工要钱
 		logger.Info("等待token到账...")
 		if count > 7 {
-			logger.Warn("获取token失败，请重启测试程序")
-			os.Exit(0)
+			return nil, errors.New("等待超时，获取token失败...")
 		}
 	}
 
@@ -61,54 +59,7 @@ func (ser *Service) GetToken(accInfo *sdk_ron.AccountInfo, minnerAcc string, fro
 	utxoTx, err := ser.GetUTXOTxFromServer(fromAcc)
 	if err != nil {
 		logger.Error("Get UTXOTx error:", err)
-	}
-	logger.Info("更新本地From账户余额...")
-	accInfo.UpdateBalance(fromAcc, amountFromminer) //自己维护账户
-	return utxoTx */
-	utxoTx, err := ser.GetTokenWithError(accInfo, minnerAcc, fromAcc, amountFromminer)
-	if err != nil {
-		os.Exit(1)
-	}
-	return utxoTx
-}
-
-func (ser *Service) GetTokenWithError(accInfo *sdk_ron.AccountInfo, minnerAcc string, fromAcc string, amountFromminer uint64) (*utxo.UTXOTx, error) {
-	count := 0
-	minerBalance, err := ser.GetBalanceWithError(minnerAcc)
-	for err == nil && uint64(minerBalance) <= amountFromminer { //等待矿工有钱
-		time.Sleep(100 * time.Millisecond)
-		minerBalance, err = ser.GetBalanceWithError(minnerAcc)
-	}
-	if err != nil {
 		return nil, err
-	}
-	err = ser.minerSendTokenToAccount(amountFromminer, fromAcc)
-	if err != nil {
-		return nil, err
-	}
-
-	fromBalance, err := ser.GetBalanceWithError(fromAcc)
-	for err == nil && uint64(fromBalance) < amountFromminer {
-		time.Sleep(1000 * time.Millisecond)
-		count++ //如果7秒还没到账，可能出错了，再问矿工要钱
-		logger.Info("等待token到账...")
-		logger.Info("fromBalance = ", fromBalance)
-		if count > 7 {
-			logger.Warn("获取token失败，请重启测试程序")
-			//os.Exit(0)
-			return nil, errors.New("获取token失败，请重启测试程序")
-		}
-		fromBalance, err = ser.GetBalanceWithError(fromAcc)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	//获取utxo，更新balance
-	logger.Info("查询From账户UTXO...")
-	utxoTx, err := ser.GetUTXOTxFromServer(fromAcc)
-	if err != nil {
-		logger.Error("Get UTXOTx error:", err)
 	}
 	logger.Info("更新本地From账户余额...")
 	accInfo.UpdateBalance(fromAcc, amountFromminer) //自己维护账户
@@ -117,7 +68,7 @@ func (ser *Service) GetTokenWithError(accInfo *sdk_ron.AccountInfo, minnerAcc st
 }
 
 //从矿工拿钱，得等到挖出一个快，矿工才有钱
-func (ser *Service) minerSendTokenToAccount(amount uint64, account string) error {
+func (ser *Service) minerSendTokenToAccount(amount uint64, account string) {
 	sendFromMinerRequest := &rpcpb.SendFromMinerRequest{To: account, Amount: common.NewAmount(amount).Bytes()}
 
 	//通过句柄调用函数：rpc RpcSendFromMiner (SendFromMinerRequest) returns (SendFromMinerResponse) {}，
@@ -125,15 +76,131 @@ func (ser *Service) minerSendTokenToAccount(amount uint64, account string) error
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("minerSendTokenToAccount,Error: server is not reachable!", err)
 		default:
-			logger.Error("Error:", err.Error())
+			logger.Error("Error:", err)
 		}
-		return err
+		return
 	}
 	//logger.Info(amount, " has been sent to FromAddress.",time.Now().Format("2006-01-02 15:04:05"))
 	logger.Info("已向矿工发送获取token请求...")
-	return nil
+
+}
+
+//生成一对一的交易
+func (ser *Service) sendOneToOneToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
+	var oneUtxo *utxo.UTXO
+	//找到一个的UTXO
+
+	for _, v := range utxos.Indices {
+		oneUtxo = v
+		break
+	}
+	//把这个utxo发送掉
+	amount := oneUtxo.Value.Uint64()
+	oneUtxoTX := []*utxo.UTXO{oneUtxo}
+	logger.Info("send an utxo with value: ", amount)
+	ser.sendUTXOToken(pubkeyHash, oneUtxoTX, utxos, accInfo, amount, fromAccount, toAccount)
+}
+
+//生成一对多的交易
+func (ser *Service) sendOneToAllToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
+	var oneUtxo *utxo.UTXO
+	//找到一个大于1的UTXO
+	for _, v := range utxos.Indices {
+		if v.Value.Uint64() > 1 {
+			oneUtxo = v
+			break
+		}
+	}
+	// 让交易返还一个单位的UTXO并使用掉剩下的UTXO
+	amount := oneUtxo.Value.Uint64() - 1
+	oneUtxoTX := []*utxo.UTXO{oneUtxo}
+	logger.Info("send an utxo with value: ", amount)
+	ser.sendUTXOToken(pubkeyHash, oneUtxoTX, utxos, accInfo, amount, fromAccount, toAccount)
+}
+
+//生成多对多的交易
+func (ser *Service) sendAllToAllToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, fromAccount, toAccount string) {
+	var amount uint64
+	//统计所有utxo的总量
+	for _, v := range utxos.Indices {
+		amount += v.Value.Uint64()
+
+	}
+	// 让交易返还一个单位的UTXO并使用掉剩下的UTXO
+	amount--
+	logger.Info("send an utxo with value: ", amount)
+	ser.SendToken(pubkeyHash, utxos, accInfo, amount, 0, fromAccount, toAccount)
+}
+
+func (ser *Service) sendUTXOToken(pubkeyHash account.PubKeyHash, needSpend []*utxo.UTXO, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount uint64, fromAccount, toAccount string) {
+	//创建交易
+	tx, err := util_ron.CreateUTXOTransaction(needSpend, accInfo, amount, fromAccount, toAccount)
+	if err != nil {
+		logger.Error("The transaction was abandoned.", err)
+		return
+	}
+	//发送交易请求
+	sendTransactionRequest := &rpcpb.SendTransactionRequest{Transaction: tx.ToProto().(*transactionpb.Transaction)}
+	_, err = ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
+	if err != nil {
+		switch status.Code(err) {
+		case codes.Unavailable:
+			logger.Error("sendUTXOToken,Error: server is not reachable!", err)
+		default:
+			logger.Error("Other error:", status.Convert(err).Message())
+		}
+		return
+	}
+
+	//这里更新部分是对的，因为更新好以后还是可以继续交易。
+	util_ron.UpdateUTXOs(pubkeyHash, utxos, &tx) //更新utxo
+
+	accInfo.UpdateBalance(fromAccount, -amount)
+	accInfo.UpdateBalance(toAccount, amount)
+	//logger.Info("New transaction is sent! ")
+}
+
+//测试UTXO
+func (ser *Service) StartTestUTXO(pubkeyHash account.PubKeyHash, accInfo *sdk_ron.AccountInfo, minnerAcc, fromAcc, toAcc string, tps int32, amountFromminer uint64, testType string) {
+	var utxoTx *utxo.UTXOTx
+	var err error
+	ticker := time.NewTicker(time.Millisecond * time.Duration(1000/tps)) //定时1秒
+	utxoTx, err = ser.GetToken(accInfo, minnerAcc, fromAcc, amountFromminer)
+	if err != nil {
+		logger.Error("GetBalance failed,error:", err)
+		os.Exit(1)
+	}
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			//本地没钱了就问服务器要，如果使用服务器的余额判断，因为延迟关系，本地早没钱了，
+			//还在发送交易，传到服务器，服务器会接受到很多不存在的交易
+			if len(utxoTx.Indices) > 2 {
+				if testType == "oneToOne" {
+					ser.sendOneToOneToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
+					return
+				} else if testType == "oneToAll" {
+					ser.sendOneToAllToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
+					return
+				} else if testType == "allToAll" {
+					ser.sendAllToAllToken(pubkeyHash, utxoTx, accInfo, fromAcc, toAcc)
+					return
+				} else {
+					return
+				}
+			} else { //没钱了就问服务器要
+
+				utxoTx, err = ser.GetToken(accInfo, minnerAcc, fromAcc, amountFromminer)
+				if err != nil {
+					logger.Error("GetBalance failed,error:", err)
+					os.Exit(1)
+				}
+			}
+		}
+	}
 }
 
 func (ser *Service) GetUTXOTxFromServer(fromAccount string) (*utxo.UTXOTx, error) {
@@ -143,7 +210,7 @@ func (ser *Service) GetUTXOTxFromServer(fromAccount string) (*utxo.UTXOTx, error
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("GetUTXOTxFromServer,Error: server is not reachable!", err)
 		default:
 			logger.Error("Error:", status.Convert(err).Message())
 		}
@@ -164,40 +231,21 @@ func (ser *Service) GetUTXOTxFromServer(fromAccount string) (*utxo.UTXOTx, error
 }
 
 //付款
-func (ser *Service) SendToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) {
-	/* //创建交易
-	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, tip, fromAccount, toAccount)
-	if err != nil {
-		logger.Error("The transaction was abandoned.", err)
-		return
-	}
-	//发送交易请求
-	ser.sendToken(tx, pubkeyHash, utxos, accInfo, amount, tip, fromAccount, toAccount) */
-	err := ser.SendTokenWithError(pubkeyHash, utxos, accInfo, amount, tip, fromAccount, toAccount)
-	if err != nil {
-		return
-	}
-}
-
-func (ser *Service) SendTokenWithError(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) error {
+func (ser *Service) SendToken(pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tips uint64, fromAccount, toAccount string) error {
 	//创建交易
-	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, tip, fromAccount, toAccount)
+	tx, err := util_ron.CreateTransactionByUTXOs(utxos, accInfo, amount, tips, fromAccount, toAccount)
 	if err != nil {
 		logger.Error("The transaction was abandoned.", err)
 		return err
 	}
 	//发送交易请求
-	return ser.sendToken(tx, pubkeyHash, utxos, accInfo, amount, tip, fromAccount, toAccount)
-}
-
-func (ser *Service) sendToken(tx transaction.Transaction, pubkeyHash account.PubKeyHash, utxos *utxo.UTXOTx, accInfo *sdk_ron.AccountInfo, amount, tip uint64, fromAccount, toAccount string) error {
 	sendTransactionRequest := &rpcpb.SendTransactionRequest{Transaction: tx.ToProto().(*transactionpb.Transaction)}
-	_, err := ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
+	_, err = ser.conn.RpcSendTransaction(context.Background(), sendTransactionRequest)
 
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("SendToken,Error: server is not reachable!", err)
 		default:
 			logger.Error("Other error:", status.Convert(err).Message())
 		}
@@ -207,7 +255,7 @@ func (ser *Service) sendToken(tx transaction.Transaction, pubkeyHash account.Pub
 	//这里更新部分是对的，因为更新好以后还是可以继续交易。
 	util_ron.UpdateUTXOs(pubkeyHash, utxos, &tx) //更新utxo
 
-	accInfo.UpdateBalance(fromAccount, -amount-tip)
+	accInfo.UpdateBalance(fromAccount, -amount-tips)
 	accInfo.UpdateBalance(toAccount, amount)
 	//logger.Info("New transaction is sent! ")
 	return nil
@@ -215,36 +263,30 @@ func (ser *Service) sendToken(tx transaction.Transaction, pubkeyHash account.Pub
 
 //得到指定账户的余额
 func (ser *Service) GetBalance(account string) int64 {
-	/* response, err := ser.conn.RpcGetBalance(context.Background(), &rpcpb.GetBalanceRequest{Address: account})
+	response, err := ser.conn.RpcGetBalance(context.Background(), &rpcpb.GetBalanceRequest{Address: account})
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("GetBalance,Error: server is not reachable!", err)
 		default:
 			logger.Error("Error:", status.Convert(err).Message())
 		}
 		os.Exit(1)
 	}
-	return response.GetAmount() */
-
-	balance, err := ser.GetBalanceWithError(account)
-	if err != nil {
-		os.Exit(1)
-	}
-	return balance
+	return response.GetAmount()
 }
 
-// GetBalanceWithError requests balance of account and returns error if any
+// GetBalanceWithError returns balance of account from server and returns err if any
 func (ser *Service) GetBalanceWithError(account string) (int64, error) {
 	response, err := ser.conn.RpcGetBalance(context.Background(), &rpcpb.GetBalanceRequest{Address: account})
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("GetBalance,Error: server is not reachable!", err)
 		default:
 			logger.Error("Error:", status.Convert(err).Message())
 		}
-		return -1, err
+		return 0, err
 	}
 	return response.GetAmount(), nil
 }
@@ -257,7 +299,7 @@ func (ser *Service) GetBalanceWithRespondTime(account string) (int64, int64) {
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			logger.Error("Error: server is not reachable!")
+			logger.Error("GetBalanceWithRespondTime,Error: server is not reachable!", err)
 		default:
 			logger.Error("Error:", status.Convert(err).Message())
 		}
