@@ -160,9 +160,9 @@ func startTx(ser *service.Service, accInfo *account_ron.AccountInfo, minnerAcc s
 					os.Exit(1)
 				}
 			}
-			if accInfo.GetBalance(fromAcc) > 1 && *sendTxSignal { //每次交易就发1个token和1个tip
-				logger.Infof("Sending 1 Token from %s to %s with 1 tip...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
-				err = ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 1, fromAcc, toAcc)
+			if accInfo.GetBalance(fromAcc) > 1 && *sendTxSignal { //每次交易就发1个token
+				logger.Infof("Sending 1 Token from %s to %s ...\n", shortenAddress(fromAcc), shortenAddress(toAcc))
+				err = ser.SendToken(fromAccount.GetPubKeyHash(), utxoTx, accInfo, 1, 0, fromAcc, toAcc)
 				if err != nil {
 					logger.Error("SendToken failed! error: ", err)
 					os.Exit(1)
