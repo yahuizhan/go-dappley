@@ -29,7 +29,6 @@ import (
 	"github.com/dappley/go-dappley/storage"
 	logger "github.com/sirupsen/logrus"
 	"sort"
-	"strconv"
 	"sync"
 )
 
@@ -122,8 +121,6 @@ func (utxos *UTXOIndex) GetAllUTXOsByPubKeyHash(pubkeyHash account.PubKeyHash) *
 }
 
 func (utxos *UTXOIndex) GetUpdatedUtxo(pubkeyHash account.PubKeyHash, txid []byte, vout int) (*utxo.UTXO, error) {
-	utxoKey := string(txid) + "_" + strconv.Itoa(vout)
-
 	if _, ok := utxos.indexAdd[pubkeyHash.String()]; ok {
 		utxo := utxos.indexAdd[pubkeyHash.String()].GetUtxo(txid, vout)
 		if utxo != nil {
@@ -138,7 +135,7 @@ func (utxos *UTXOIndex) GetUpdatedUtxo(pubkeyHash account.PubKeyHash, txid []byt
 		}
 	}
 
-	utxo, err := utxos.cache.GetUtxoByPubkey(pubkeyHash.String(), utxoKey)
+	utxo, err := utxos.cache.GetUtxoByPubkey(pubkeyHash.String(), utxo.GetUTXOKey(txid,vout))
 	if err != nil {
 		return nil, err
 	}
@@ -308,13 +305,13 @@ func (utxos *UTXOIndex) AddUTXO(txout transactionbase.TXOutput, txid []byte, vou
 		u = utxo.NewUTXO(txout, txid, vout, utxo.UtxoNormal)
 	}
 
-	utxos.mutex.Lock()
-	defer utxos.mutex.Unlock()
 	utxoTx, ok := utxos.indexAdd[txout.PubKeyHash.String()]
 	if !ok {
 		utxoTx := utxo.NewUTXOTx()
 		utxoTx.PutUtxo(u)
+		utxos.mutex.Lock()
 		utxos.indexAdd[txout.PubKeyHash.String()] = &utxoTx
+		utxos.mutex.Unlock()
 	} else {
 		utxoTx.PutUtxo(u)
 	}
@@ -322,8 +319,7 @@ func (utxos *UTXOIndex) AddUTXO(txout transactionbase.TXOutput, txid []byte, vou
 
 // removeUTXO finds and removes a UTXO from UTXOIndex
 func (utxos *UTXOIndex) removeUTXO(pkh account.PubKeyHash, txid []byte, vout int) error {
-	utxos.mutex.Lock()
-	utxoKey := string(txid) + "_" + strconv.Itoa(vout)
+	utxoKey := utxo.GetUTXOKey(txid,vout)
 	var u = &utxo.UTXO{}
 
 	//update indexRemove
@@ -332,7 +328,9 @@ func (utxos *UTXOIndex) removeUTXO(pkh account.PubKeyHash, txid []byte, vout int
 		_, ok = utxos.indexAdd[pkh.String()].Indices[utxoKey]
 	}
 	if ok {
+		utxos.mutex.Lock()
 		delete(utxos.indexAdd[pkh.String()].Indices, utxoKey)
+		utxos.mutex.Unlock()
 	} else {
 		u, err := utxos.cache.GetUtxoByPubkey(pkh.String(), utxoKey)
 		if err != nil {
@@ -343,12 +341,14 @@ func (utxos *UTXOIndex) removeUTXO(pkh account.PubKeyHash, txid []byte, vout int
 		if !ok {
 			utxoTx := utxo.NewUTXOTx()
 			utxoTx.PutUtxo(u)
+			utxos.mutex.Lock()
 			utxos.indexRemove[pkh.String()] = &utxoTx
+			utxos.mutex.Unlock()
 		} else {
 			utxoTx.PutUtxo(u)
 		}
 	}
-	utxos.mutex.Unlock()
+
 
 	if u.UtxoType != utxo.UtxoCreateContract {
 		return nil
