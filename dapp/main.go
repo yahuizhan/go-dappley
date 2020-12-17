@@ -20,6 +20,7 @@ package main
 
 import (
 	"flag"
+	"github.com/dappley/go-dappley/core/transaction"
 
 	"github.com/dappley/go-dappley/core/blockchain"
 	"github.com/dappley/go-dappley/core/blockproducerinfo"
@@ -153,10 +154,12 @@ func main() {
 	bm.Getblockchain().SetState(blockchain.BlockchainReady)
 	bm.RequestDownloadBlockchain()
 
-	// switch on RunScheduleEvents
-	if viper.GetBool("scheduleEvents.enable") {
-		lblockchain.SetEnableRunScheduleEvents()
+	minerSubsidy := viper.GetInt("log.minerSubsidy")
+	if minerSubsidy == 0{
+		minerSubsidy = 1000000000
 	}
+	transaction.SetSubsidy(minerSubsidy)
+
 	if viper.GetBool("metrics.open") {
 		logMetrics.LogMetricsInfo(bm.Getblockchain())
 	}

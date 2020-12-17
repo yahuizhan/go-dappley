@@ -19,6 +19,7 @@ package lblockchain
 
 import (
 	"bytes"
+
 	"github.com/dappley/go-dappley/common/log"
 
 	"github.com/pkg/errors"
@@ -26,14 +27,14 @@ import (
 	"github.com/dappley/go-dappley/common/hash"
 	"github.com/dappley/go-dappley/common/pubsub"
 	"github.com/dappley/go-dappley/core/block"
-	"github.com/dappley/go-dappley/core/block/pb"
+	blockpb "github.com/dappley/go-dappley/core/block/pb"
 	"github.com/dappley/go-dappley/core/blockchain"
 	"github.com/dappley/go-dappley/core/scState"
 	"github.com/dappley/go-dappley/logic/lblock"
 	"github.com/dappley/go-dappley/logic/lutxo"
 
 	"github.com/dappley/go-dappley/common"
-	"github.com/dappley/go-dappley/logic/lblockchain/pb"
+	lblockchainpb "github.com/dappley/go-dappley/logic/lblockchain/pb"
 	"github.com/dappley/go-dappley/network/networkmodel"
 	"github.com/dappley/go-dappley/storage"
 	"github.com/golang/protobuf/proto"
@@ -79,7 +80,6 @@ func NewBlockchainManager(blockchain *Blockchain, blockpool *blockchain.BlockPoo
 func (bm *BlockchainManager) GetDownloadRequestCh() chan chan bool {
 	return bm.downloadRequestCh
 }
-
 
 func (bm *BlockchainManager) RequestDownloadBlockchain() {
 	go func() {
@@ -185,16 +185,19 @@ func (bm *BlockchainManager) Push(blk *block.Block, pid networkmodel.PeerInfo) {
 		return
 	}
 
-	if !bm.blockchain.IsInBlockchain(forkHeadBlk.GetPrevHash()) {
-		logger.WithFields(logger.Fields{
-			"parent_hash": forkHeadBlk.GetPrevHash(),
-			"from":        pid,
-		}).Info("BlockchainManager: cannot find the parent of the received blk from blockchain. Requesting the parent...")
-		bm.RequestBlock(forkHeadBlk.GetPrevHash(), pid)
-		return
+	if !bm.blockchain.IsInBlockchain(forkHeadBlk.GetHash()) {
+		if !bm.blockchain.IsInBlockchain(forkHeadBlk.GetPrevHash()) {
+			logger.WithFields(logger.Fields{
+				"parent_hash": forkHeadBlk.GetPrevHash(),
+				"from":        pid,
+			}).Info("BlockchainManager: cannot find the parent of the received blk from blockchain. Requesting the parent...")
+			bm.RequestBlock(forkHeadBlk.GetPrevHash(), pid)
+			return
+		}
 	}
 
-	fork := bm.blockPool.GetFork(forkHeadBlk.GetPrevHash())
+	fork := bm.blockPool.GetFork(forkHeadBlk.GetHash())
+
 	if fork == nil {
 		return
 	}
@@ -203,19 +206,28 @@ func (bm *BlockchainManager) Push(blk *block.Block, pid networkmodel.PeerInfo) {
 		return
 	}
 
-	bm.blockchain.SetState(blockchain.BlockchainSync)
+	func() {
+		bm.Getblockchain().mutex.Lock()
+		defer bm.Getblockchain().mutex.Unlock()
+		if bm.blockchain.GetState() != blockchain.BlockchainReady {
+			logger.Infof("Push: MergeFork cancelled  because blockchain is not ready. Current status is %v", bm.blockchain.GetState())
+			return
+		}
+		bm.blockchain.SetState(blockchain.BlockchainSync)
+	}()
 	logger.Info("Push: set blockchain status to sync.")
 
 	err := bm.MergeFork(fork, forkHeadBlk.GetPrevHash())
-	if err!=nil{
-		logger.Warn("Merge fork failed.err:",err)
+	if err != nil {
+		logger.Warn("Merge fork failed.err:", err)
 	}
 	bm.blockPool.RemoveFork(fork)
 
 	bm.Getblockchain().mutex.Lock()
 	bm.blockchain.SetState(blockchain.BlockchainReady)
-	logger.Info("Push: set blockchain status to ready.")
 	bm.Getblockchain().mutex.Unlock()
+	logger.Info("Push: set blockchain status to ready.")
+
 	return
 }
 
@@ -230,14 +242,13 @@ func (bm *BlockchainManager) MergeFork(forkBlks []*block.Block, forkParentHash h
 		return nil
 	}
 
-	//verify transactions in the fork
+	//utxo has been reverted to forkParentHash in this step
 	utxo, scState, err := RevertUtxoAndScStateAtBlockHash(bm.blockchain.GetDb(), bm.blockchain, forkParentHash)
 	if err != nil {
 		logger.Error("BlockchainManager: blockchain is corrupted! Delete the database file and resynchronize to the network.")
 		return err
 	}
-	rollBackUtxo := utxo.DeepCopy()
-	rollScState := scState.DeepCopy()
+	bm.blockchain.Rollback(forkParentHash, scState)
 
 	parentBlk, err := bm.blockchain.GetBlockByHash(forkParentHash)
 	if err != nil {
@@ -247,9 +258,11 @@ func (bm *BlockchainManager) MergeFork(forkBlks []*block.Block, forkParentHash h
 		}).Error("BlockchainManager: get fork parent block failed.")
 	}
 
-	firstCheck := true
-
 	for i := len(forkBlks) - 1; i >= 0; i-- {
+		if !bm.Getblockchain().CheckLibPolicy(forkBlks[i]) {
+			return ErrProducerNotEnough
+		}
+
 		logger.WithFields(logger.Fields{
 			"height": forkBlks[i].GetHeight(),
 			"hash":   forkBlks[i].GetHash().String(),
@@ -257,15 +270,6 @@ func (bm *BlockchainManager) MergeFork(forkBlks []*block.Block, forkParentHash h
 
 		if !lblock.VerifyTransactions(forkBlks[i], utxo, scState, parentBlk) {
 			return ErrTransactionVerifyFailed
-		}
-
-		if !bm.Getblockchain().CheckLibPolicy(forkBlks[i]) {
-			return ErrProducerNotEnough
-		}
-
-		if firstCheck {
-			firstCheck = false
-			bm.blockchain.Rollback(forkParentHash, rollBackUtxo, rollScState)
 		}
 
 		ctx := BlockContext{Block: forkBlks[i], UtxoIndex: utxo, State: scState}
@@ -394,7 +398,11 @@ func RevertUtxoAndScStateAtBlockHash(db storage.Storage, bc *Blockchain, hash ha
 			return nil, nil, err
 		}
 	}
-
+	//updated utxo in db
+	err:=index.Save()
+	if err!=nil{
+		return nil, nil, err
+	}
 	return index, scState, nil
 }
 

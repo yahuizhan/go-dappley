@@ -19,14 +19,10 @@
 package utxo
 
 import (
-	"hash/fnv"
-	"strconv"
-
+	"bytes"
 	"github.com/dappley/go-dappley/common"
-	utxopb "github.com/dappley/go-dappley/core/utxo/pb"
-	"github.com/golang/protobuf/proto"
 	"github.com/raviqqe/hamt"
-	logger "github.com/sirupsen/logrus"
+	"hash/fnv"
 )
 
 // UTXOTx holds txid_vout and UTXO pairs
@@ -59,8 +55,7 @@ func NewUTXOTx() UTXOTx {
 
 // Construct with UTXO data
 func NewUTXOTxWithData(utxo *UTXO) UTXOTx {
-	key := string(utxo.Txid) + "_" + strconv.Itoa(utxo.TxIndex)
-	return UTXOTx{Indices: map[string]*UTXO{key: utxo}}
+	return UTXOTx{Indices: map[string]*UTXO{GetUTXOKey(utxo.Txid,utxo.TxIndex): utxo}}
 }
 
 // Construct with map size
@@ -68,59 +63,32 @@ func NewUTXOTxWithSize(size int) *UTXOTx {
 	return Alloc(size)
 }
 
-func DeserializeUTXOTx(d []byte) UTXOTx {
-	utxoTx := NewUTXOTx()
-
-	utxoList := &utxopb.UtxoList{}
-	err := proto.Unmarshal(d, utxoList)
-	if err != nil {
-		logger.WithFields(logger.Fields{"error": err}).Error("UtxoTx: parse UtxoTx failed.")
-		return utxoTx
-	}
-
-	for _, utxoPb := range utxoList.Utxos {
-		var utxo = &UTXO{}
-		utxo.FromProto(utxoPb)
-		utxoTx.PutUtxo(utxo)
-	}
-
-	return utxoTx
-}
-
-func (utxoTx UTXOTx) Serialize() []byte {
-	utxoList := &utxopb.UtxoList{}
-
-	for _, utxo := range utxoTx.Indices {
-		utxoList.Utxos = append(utxoList.Utxos, utxo.ToProto().(*utxopb.Utxo))
-	}
-	bytes, err := proto.Marshal(utxoList)
-	if err != nil {
-		logger.WithFields(logger.Fields{"error": err}).Error("UtxoTx: serialize UtxoTx failed.")
-		return nil
-	}
-	return bytes
-}
-
 // Returns utxo info by transaction id and vout index
 func (utxoTx UTXOTx) GetUtxo(txid []byte, vout int) *UTXO {
-	key := string(txid) + "_" + strconv.Itoa(vout)
-	utxo, ok := utxoTx.Indices[key]
+	utxo, ok := utxoTx.Indices[GetUTXOKey(txid,vout)]
 	if !ok {
 		return nil
 	}
 	return utxo
 }
 
+func (utxoTx UTXOTx) GetPerUtxoByKey(utxokey []byte) *UTXO {
+	for _,utxo:= range utxoTx.Indices{
+		if bytes.Equal(utxo.NextUtxoKey,utxokey){
+			return utxo
+		}
+	}
+	return nil
+}
+
 // Add new utxo to map
 func (utxoTx UTXOTx) PutUtxo(utxo *UTXO) {
-	key := string(utxo.Txid) + "_" + strconv.Itoa(utxo.TxIndex)
-	utxoTx.Indices[key] = utxo
+	utxoTx.Indices[GetUTXOKey(utxo.Txid,utxo.TxIndex)] = utxo
 }
 
 // Delete invalid element in map
 func (utxoTx UTXOTx) RemoveUtxo(txid []byte, vout int) {
-	key := string(txid) + "_" + strconv.Itoa(vout)
-	delete(utxoTx.Indices, key)
+	delete(utxoTx.Indices, GetUTXOKey(txid,vout))
 }
 
 func (utxoTx UTXOTx) Size() int {
@@ -165,4 +133,3 @@ func (utxoTx UTXOTx) DeepCopy() *UTXOTx {
 	}
 	return newUtxoTx
 }
-

@@ -64,7 +64,7 @@ const InvalidAddress = "Invalid Address"
 
 //test logic.Send
 func TestSend(t *testing.T) {
-	var mineReward = common.NewAmount(10000000)
+	var mineReward = transaction.Subsidy
 	testCases := []struct {
 		name             string
 		transferAmount   *common.Amount
@@ -190,7 +190,7 @@ func TestSendToInvalidAddress(t *testing.T) {
 	defer store.Close()
 
 	//this is internally set. Dont modify
-	mineReward := common.NewAmount(10000000)
+	mineReward := transaction.Subsidy
 	//Transfer ammount
 	transferAmount := common.NewAmount(25)
 	tip := common.NewAmount(5)
@@ -236,9 +236,9 @@ func TestSendInsufficientBalance(t *testing.T) {
 	tip := common.NewAmount(5)
 
 	//this is internally set. Dont modify
-	mineReward := common.NewAmount(10000000)
+	mineReward := transaction.Subsidy
 	//Transfer ammount is larger than the balance
-	transferAmount := common.NewAmount(250000000)
+	transferAmount := common.NewAmount(25000000000)
 
 	//create a account address
 	account1, err := logic.CreateAccountWithPassphrase("test", logic.GetTestAccountPath())
@@ -273,7 +273,6 @@ func TestSendInsufficientBalance(t *testing.T) {
 
 	//logic.Send 5 coins from addr1 to addr2
 	_, _, err = logic.Send(account1, addr2, transferAmount, tip, common.NewAmount(0), common.NewAmount(0), "", bc)
-
 	assert.NotNil(t, err)
 
 	//the balance of the first account should be still be 10
@@ -637,7 +636,7 @@ func TestSmartContractLocalStorage(t *testing.T) {
 	assert.Nil(t, err)
 	currentHeight := bm.Getblockchain().GetMaxHeight()
 	bps.Start()
-	for bm.Getblockchain().GetMaxHeight() < currentHeight + 1 {
+	for bm.Getblockchain().GetMaxHeight() < currentHeight+1 {
 	}
 	bps.Stop()
 
@@ -648,7 +647,7 @@ func TestSmartContractLocalStorage(t *testing.T) {
 	assert.Nil(t, err)
 	currentHeight = bm.Getblockchain().GetMaxHeight()
 	bps.Start()
-	for bm.Getblockchain().GetMaxHeight() < currentHeight + 1 {
+	for bm.Getblockchain().GetMaxHeight() < currentHeight+1 {
 	}
 	bps.Stop()
 	logic.RemoveAccountTestFile()
@@ -915,8 +914,8 @@ func TestUpdate(t *testing.T) {
 	}
 	dependentTx5.ID = dependentTx5.Hash()
 
-	utxoPk2 := &utxo.UTXO{dependentTx1.Vout[1], dependentTx1.ID, 1, utxo.UtxoNormal}
-	utxoPk1 := &utxo.UTXO{dependentTx1.Vout[0], dependentTx1.ID, 0, utxo.UtxoNormal}
+	utxoPk2 := &utxo.UTXO{dependentTx1.Vout[1], dependentTx1.ID, 1, utxo.UtxoNormal, []byte{}}
+	utxoPk1 := &utxo.UTXO{dependentTx1.Vout[0], dependentTx1.ID, 0, utxo.UtxoNormal, []byte{}}
 
 	utxoTxPk2 := utxo.NewUTXOTx()
 	utxoTxPk2.PutUtxo(utxoPk2)
@@ -926,16 +925,16 @@ func TestUpdate(t *testing.T) {
 
 	utxoIndex2 := lutxo.NewUTXOIndex(utxo.NewUTXOCache(storage.NewRamStorage()))
 
-	utxoIndex2.SetIndex(map[string]*utxo.UTXOTx{
+	utxoIndex2.SetIndexAdd(map[string]*utxo.UTXOTx{
 		ta2.GetPubKeyHash().String(): &utxoTxPk2,
 		ta1.GetPubKeyHash().String(): &utxoTxPk1,
 	})
 
-	tx2Utxo1 := utxo.UTXO{dependentTx2.Vout[0], dependentTx2.ID, 0, utxo.UtxoNormal}
-	tx2Utxo2 := utxo.UTXO{dependentTx2.Vout[1], dependentTx2.ID, 1, utxo.UtxoNormal}
-	tx2Utxo3 := utxo.UTXO{dependentTx3.Vout[0], dependentTx3.ID, 0, utxo.UtxoNormal}
-	tx2Utxo4 := utxo.UTXO{dependentTx1.Vout[0], dependentTx1.ID, 0, utxo.UtxoNormal}
-	tx2Utxo5 := utxo.UTXO{dependentTx4.Vout[0], dependentTx4.ID, 0, utxo.UtxoNormal}
+	tx2Utxo1 := utxo.UTXO{dependentTx2.Vout[0], dependentTx2.ID, 0, utxo.UtxoNormal, []byte{}}
+	tx2Utxo2 := utxo.UTXO{dependentTx2.Vout[1], dependentTx2.ID, 1, utxo.UtxoNormal, []byte{}}
+	tx2Utxo3 := utxo.UTXO{dependentTx3.Vout[0], dependentTx3.ID, 0, utxo.UtxoNormal, []byte{}}
+	tx2Utxo4 := utxo.UTXO{dependentTx1.Vout[0], dependentTx1.ID, 0, utxo.UtxoNormal, []byte{}}
+	tx2Utxo5 := utxo.UTXO{dependentTx4.Vout[0], dependentTx4.ID, 0, utxo.UtxoNormal, []byte{}}
 	ltransaction.NewTxDecorator(dependentTx2).Sign(account.GenerateKeyPairByPrivateKey(prikey2).GetPrivateKey(), utxoIndex2.GetAllUTXOsByPubKeyHash(ta2.GetPubKeyHash()).GetAllUtxos())
 	ltransaction.NewTxDecorator(dependentTx3).Sign(account.GenerateKeyPairByPrivateKey(prikey3).GetPrivateKey(), []*utxo.UTXO{&tx2Utxo1})
 	ltransaction.NewTxDecorator(dependentTx4).Sign(account.GenerateKeyPairByPrivateKey(prikey4).GetPrivateKey(), []*utxo.UTXO{&tx2Utxo2, &tx2Utxo3})
@@ -947,12 +946,12 @@ func TestUpdate(t *testing.T) {
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta2.GetPubKeyHash()).Size())
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta3.GetPubKeyHash()).Size())
 	assert.Equal(t, 2, utxoIndex2.GetAllUTXOsByPubKeyHash(ta4.GetPubKeyHash()).Size())
-	txsForUpdate = []*transaction.Transaction{dependentTx2, dependentTx3, dependentTx4}
+	txsForUpdate = []*transaction.Transaction{dependentTx4}
 	utxoIndex2.UpdateUtxos(txsForUpdate)
 	assert.Equal(t, 2, utxoIndex2.GetAllUTXOsByPubKeyHash(ta1.GetPubKeyHash()).Size())
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta2.GetPubKeyHash()).Size())
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta3.GetPubKeyHash()).Size())
-	txsForUpdate = []*transaction.Transaction{dependentTx2, dependentTx3, dependentTx4, dependentTx5}
+	txsForUpdate = []*transaction.Transaction{dependentTx5}
 	utxoIndex2.UpdateUtxos(txsForUpdate)
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta1.GetPubKeyHash()).Size())
 	assert.Equal(t, 0, utxoIndex2.GetAllUTXOsByPubKeyHash(ta2.GetPubKeyHash()).Size())
